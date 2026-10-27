@@ -1550,6 +1550,7 @@
 
     if (canAccessGeneralAdmin()) {
       qaItems.push(
+        { sec: 'archive', icon: 's-archive', title: 'الأرشيف والنسخ الاحتياطية', sub: 'تنزيل أرشيف ZIP شامل ومنظم للأطفال والتقارير' },
         { sec: 'accounts', icon: 's-shield', title: 'قسم الإدارة والصلاحيات', sub: 'حسابات الإدارة وإذن الدخول لكل مركز' },
         { sec: 'audit', icon: 's-log', title: 'سجل العمليات', sub: 'متابعة النشاط والرقابة الأمنية' },
         { sec: 'settings', icon: 's-gear', title: 'الأمان والإعدادات', sub: 'المصادقة الثنائية وإعدادات النظام' }
@@ -6679,6 +6680,698 @@
   }
 
   /* =====================================================================
+     12. قسم الأرشيف الشامل والنسخ الاحتياطية (Archive & Automated Backups)
+     ===================================================================== */
+  var ARABIC_MONTH_NAMES_LIST = {
+    1: '01-جانفي', 2: '02-فيفري', 3: '03-مارس', 4: '04-أفريل',
+    5: '05-ماي', 6: '06-جوان', 7: '07-جويلية', 8: '08-أوت',
+    9: '09-سبتمبر', 10: '10-أكتوبر', 11: '11-نوفمبر', 12: '12-ديسمبر'
+  };
+
+  function sanitizeArchiveFolderName(name) {
+    if (!name) return 'غير_معرف';
+    return String(name).trim()
+      .replace(/[\\/:*?"<>|\r\n\t]/g, '_')
+      .slice(0, 100)
+      .trim() || 'سجل';
+  }
+
+  function generateStandaloneReportHtml(rep, child, secName, brName) {
+    var title = rep.title || 'تقرير تربوي';
+    var chName = child ? child.full_name : 'غير محدد';
+    var safeDate = rep.report_date || '';
+    var memNo = child ? (child.membership_no || '—') : '—';
+    var year = child ? (child.academic_year || '2024/2025') : '2024/2025';
+
+    var achieve = rep.achievements || '—';
+    var activ = rep.activities || '—';
+    var notes = rep.notes || '—';
+
+    // إن كانت استمارة تقييم رسمية
+    if (isEvaluationReport(rep)) {
+      var ev = parseEvaluationReport(rep);
+      var supLines = (ev.supervisors || []).map(function (s) {
+        return '<tr><td style="padding:6px;border:1px solid #000;font-weight:bold;">' + (s.name || '—') + '</td><td style="padding:6px;border:1px solid #000;">' + (s.role || '—') + '</td><td style="padding:6px;border:1px solid #000;color:#666;">..................</td></tr>';
+      }).join('');
+
+      var strLines = (ev.strengths || []).map(function (s) { return '<li>' + s + '</li>'; }).join('');
+      var wkWLines = (ev.weaknesses || []).map(function (s) { return '<li>' + s + '</li>'; }).join('');
+      var recLines = (ev.recommendations || []).map(function (s) { return '<li>' + s + '</li>'; }).join('');
+      var ab = ev.abilities || {};
+
+      return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>' + title + ' — ' + chName + '</title>' +
+        '<style>body{font-family:sans-serif;direction:rtl;padding:20px;color:#000;background:#fff;max-width:850px;margin:0 auto;border:2px solid #000;}' +
+        '.hdr{text-align:center;border-bottom:2px solid #000;padding-bottom:10px;margin-bottom:10px;}' +
+        '.term{background:#EAB308;color:#000;font-weight:bold;font-size:16px;text-align:center;padding:6px;border:1px solid #000;margin-bottom:10px;}' +
+        'table{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:13px;} th,td{border:1px solid #000;padding:5px;}' +
+        '.banner{background:#7DD3FC;font-weight:bold;text-align:center;padding:5px;border:1px solid #000;margin-bottom:8px;}' +
+        '.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}' +
+        '.box{border:1px solid #000;padding:8px;}' +
+        '.rec-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;border:1px solid #000;padding:8px;}' +
+        '</style></head><body>' +
+        '<div class="hdr"><h3>جمعية أولياء الأطفال المعاقين ذهنيًا — المركز النفسي البيداغوجي دار الإحسان</h3>' +
+        '<div>العطف - غرداية • COMPTE RENDU DE L\'EQUIPE PEDAGOGIQUE</div>' +
+        '<h2>تقرير اللجنة البيداغوجية والتربوية</h2></div>' +
+        '<div class="term">تقييم ' + (ev.term || 'الثلاثي الأخير') + ' للموسم الدراسي: ' + (ev.school_year || '2024/2025') + '</div>' +
+        '<table><tr><td style="background:#f1f5f9;font-weight:bold;width:20%;">اسم ولقب الحالة:</td><td><strong>' + chName + '</strong></td><td style="background:#f1f5f9;font-weight:bold;width:20%;">رقم القيد:</td><td>' + memNo + '</td></tr>' +
+        '<tr><td style="background:#f1f5f9;font-weight:bold;">الفرع / المركز:</td><td>' + brName + '</td><td style="background:#f1f5f9;font-weight:bold;">القسم:</td><td>' + secName + '</td></tr>' +
+        '<tr><td style="background:#f1f5f9;font-weight:bold;">درجة الإعاقة:</td><td>' + (ev.degree_of_disability || '—') + '</td><td style="background:#f1f5f9;font-weight:bold;">تاريخ التقييم:</td><td>' + safeDate + '</td></tr></table>' +
+        '<div class="banner">المشرفون على التقييم</div>' +
+        '<table><thead><tr style="background:#f8fafc;"><th>المشرف: الإسم واللقب</th><th>الوظيفة</th><th>التوقيع</th></tr></thead><tbody>' + supLines + '</tbody></table>' +
+        '<div class="banner">الوصف العام لأداء الحالة</div>' +
+        '<div class="grid"><div class="box"><strong>التقرير العام:</strong><p style="white-space:pre-wrap;line-height:1.5;">' + (ev.general_report || '—') + '</p></div>' +
+        '<div>' +
+        '<div style="margin-bottom:6px;border:1px solid #000;padding:4px;"><strong style="background:#0F172A;color:#fff;display:block;padding:2px 4px;">1. إمكانيات والقدرات الحالية:</strong> ' + (ab.current_potentials || '—') + '</div>' +
+        '<div style="margin-bottom:6px;border:1px solid #000;padding:4px;"><strong style="background:#F472B6;color:#831843;display:block;padding:2px 4px;">2. المهارات المعرفية والفكرية:</strong> ' + (ab.cognitive_intellectual || '—') + '</div>' +
+        '<div style="margin-bottom:6px;border:1px solid #000;padding:4px;"><strong style="background:#60A5FA;color:#1E3A8A;display:block;padding:2px 4px;">3. اللغة استقبالية تعبيرية:</strong> ' + (ab.language_receptive_expressive || '—') + '</div>' +
+        '<div style="margin-bottom:6px;border:1px solid #000;padding:4px;"><strong style="background:#FDBA74;color:#7C2D12;display:block;padding:2px 4px;">4. القدرات الإتصالية والسلوكية:</strong> ' + (ab.communication_behavioral || '—') + '</div>' +
+        '<div style="margin-bottom:6px;border:1px solid #000;padding:4px;"><strong style="background:#86EFAC;color:#14532D;display:block;padding:2px 4px;">5. المعارف الأكاديمية وما قبل الأكاديمي:</strong> ' + (ab.academic_preacademic || '—') + '</div>' +
+        '<div style="margin-bottom:6px;border:1px solid #000;padding:4px;"><strong style="background:#A7F3D0;color:#064E3B;display:block;padding:2px 4px;">6. القدرات الحركية والاستقلالية:</strong> ' + (ab.motor_independence || '—') + '</div>' +
+        '</div></div>' +
+        '<div class="banner" style="background:#86EFAC;color:#064E3B;">الخلاصة والتوصيات</div>' +
+        '<div class="rec-grid">' +
+        '<div><strong>1. نقاط القوة:</strong><ul>' + (strLines || '<li>—</li>') + '</ul></div>' +
+        '<div><strong>2. نقاط الضعف:</strong><ul>' + (wkWLines || '<li>—</li>') + '</ul></div>' +
+        '<div><strong>3. التوصيات:</strong><ul>' + (recLines || '<li>—</li>') + '</ul></div>' +
+        '</div>' +
+        '</body></html>';
+    }
+
+    return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>' + title + ' — ' + chName + '</title>' +
+      '<style>body{font-family:sans-serif;direction:rtl;padding:24px;color:#123E73;background:#fff;max-width:800px;margin:0 auto;}' +
+      '.hdr{text-align:center;border-bottom:2px solid #123E73;padding-bottom:12px;margin-bottom:18px;}' +
+      '.ttl{font-size:20px;font-weight:bold;color:#B4873A;margin-top:6px;}' +
+      '.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;background:#F8FAFC;padding:12px;border:1px solid #E2E8F0;border-radius:8px;font-size:14px;}' +
+      '.box{margin-bottom:14px;border:1px solid #E2E8F0;border-radius:8px;padding:12px;}' +
+      '.box-title{font-size:15px;font-weight:bold;color:#123E73;border-bottom:1px solid #CBD5E1;padding-bottom:4px;margin-top:0;}' +
+      '.txt{white-space:pre-wrap;font-size:14px;color:#334155;line-height:1.6;}' +
+      '</style></head><body>' +
+      '<div class="hdr"><h2>جمعية أولياء الأطفال المعاقين ذهنيًا — دار الإحسان</h2><div class="ttl">' + title + '</div></div>' +
+      '<div class="grid">' +
+      '<div><strong>اسم التلميذ:</strong> ' + chName + '</div>' +
+      '<div><strong>رقم القيد:</strong> ' + memNo + '</div>' +
+      '<div><strong>الفرع / المركز:</strong> ' + brName + '</div>' +
+      '<div><strong>الفوج / القسم:</strong> ' + secName + '</div>' +
+      '<div><strong>تاريخ التقرير:</strong> ' + safeDate + '</div>' +
+      '<div><strong>الموسم الدراسي:</strong> ' + year + '</div>' +
+      '</div>' +
+      '<div class="box"><h3 class="box-title">المكتسبات والمهارات المحققة</h3><div class="txt">' + achieve + '</div></div>' +
+      '<div class="box"><h3 class="box-title">الأنشطة والورشات المنجزة</h3><div class="txt">' + activ + '</div></div>' +
+      '<div class="box"><h3 class="box-title">ملاحظات وتوجيهات للأولياء</h3><div class="txt">' + notes + '</div></div>' +
+      '</body></html>';
+  }
+
+  async function secArchive(v) {
+    if (S.isEducator || !canAccessGeneralAdmin()) return go('children');
+
+    v.textContent = '';
+
+    var d = await Promise.all([
+      get('children'),
+      get('branches'),
+      get('sections'),
+      get('reports'),
+      get('docs'),
+      C.rest('GET', '/archive_runs?select=*&order=run_date.desc&limit=15').catch(function () { return []; })
+    ]);
+
+    var allKids = d[0] || [], branches = d[1] || [], sections = d[2] || [];
+    var allReports = d[3] || [], allDocs = d[4] || [], dbPastRuns = d[5] || [];
+
+    var brMap = {}, secMap = {}, chMap = {};
+    branches.forEach(function (b) { brMap[b.id] = b; });
+    sections.forEach(function (s) { secMap[s.id] = s; });
+    allKids.forEach(function (c) { chMap[c.id] = c; });
+
+    // تتبع العمليات السابقة (دمج قاعدة البيانات مع التخزين المحلي)
+    var localPastRuns = [];
+    try { localPastRuns = JSON.parse(localStorage.getItem('de_archive_runs_history') || '[]'); } catch (e) {}
+    var pastRuns = dbPastRuns.length ? dbPastRuns : localPastRuns;
+
+    // العنوان العلوي
+    v.appendChild(h('div', { class: 'bar-sub' },
+      h('div', null,
+        h('h2', { text: 'نظام الأرشفة الشاملة والنسخ الاحتياطية' }),
+        h('p', { class: 'muted small', text: 'تنزيل أرشيف ZIP شامل ومنظم للملفات والتقارير والوثائق حسب السنة، الشهر، الفرع، القسم، وكل طفل.' })
+      )
+    ));
+
+    // بطاقات الإحصائيات السريعة
+    var lastRunDateTxt = pastRuns.length ? fmt(pastRuns[0].run_date || pastRuns[0].created_at) : 'لم يتم بعد';
+    var statsGrid = h('div', { class: 'arch-stats-grid' },
+      h('div', { class: 'arch-stat-card' },
+        h('b', { class: 'arch-stat-val', text: String(allKids.length) }),
+        h('span', { class: 'arch-stat-label', text: 'إجمالي ملفات الطلبة' })
+      ),
+      h('div', { class: 'arch-stat-card' },
+        h('b', { class: 'arch-stat-val', text: String(allReports.length) }),
+        h('span', { class: 'arch-stat-label', text: 'التقارير واستمارات التقييم' })
+      ),
+      h('div', { class: 'arch-stat-card' },
+        h('b', { class: 'arch-stat-val', text: String(allDocs.length) }),
+        h('span', { class: 'arch-stat-label', text: 'الوثائق والمستندات المرفوعة' })
+      ),
+      h('div', { class: 'arch-stat-card' },
+        h('b', { class: 'arch-stat-val', text: String(pastRuns.length) }),
+        h('span', { class: 'arch-stat-label', text: 'عمليات الأرشفة المنفذة (' + lastRunDateTxt + ')' })
+      )
+    );
+    v.appendChild(statsGrid);
+
+    // 2. التحقق من الأرشفة الشهرية التلقائية (تنبيه إذا كان الشهر السابق غير مؤرشف)
+    var now = new Date();
+    var firstOfCurrent = new Date(now.getFullYear(), now.month, 1);
+    var prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    var prevYear = prevMonthDate.getFullYear();
+    var prevMonthNum = prevMonthDate.getMonth() + 1;
+    var prevMonthName = ARABIC_MONTH_NAMES_LIST[prevMonthNum] || String(prevMonthNum);
+
+    var hasArchivedPrev = pastRuns.some(function (pr) {
+      return pr.period_year === prevYear && pr.period_month === prevMonthNum && (pr.status === 'completed' || pr.status === 'completed_with_errors');
+    });
+
+    if (!hasArchivedPrev) {
+      var autoBtn = h('button', {
+        type: 'button',
+        class: 'btn gold',
+        text: 'أرشفة وتنزيل شهر ' + prevMonthName + ' الآن',
+        onclick: function () {
+          startArchiveJob({
+            scope: 'monthly_auto',
+            year: prevYear,
+            month: prevMonthNum,
+            scopeLabel: 'الأرشفة الشهرية التلقائية لشهر ' + prevMonthName + ' ' + prevYear
+          });
+        }
+      });
+
+      var autoBanner = h('div', { class: 'arch-auto-banner' },
+        h('div', null,
+          h('div', { class: 'arch-auto-title', text: '🔔 حان موعد الأرشفة الشهرية التلقائية لشهر: ' + prevMonthName + ' (' + prevYear + ')' }),
+          h('div', { class: 'arch-auto-sub', text: 'وفق توقيت الجزائر (Africa/Algiers): يمكنك إنشاء أرشيف الشهر السابق وتنزيله بضغطة زر واحدة لحفظ التقارير والوثائق المضافة أو المعدلة.' })
+        ),
+        autoBtn
+      );
+      v.appendChild(autoBanner);
+    }
+
+    // 3. بطاقة إعداد وتنزيل الأرشيف المخصص
+    var scopeSelect = h('select', null,
+      h('option', { value: 'all', text: '1. تنزيل جميع ملفات دار الإحسان (الأرشيف الشامل)' }),
+      h('option', { value: 'branch', text: '2. تنزيل أرشيف فرع / مركز محدد' }),
+      h('option', { value: 'section', text: '3. تنزيل أرشيف قسم / فوج محدد' }),
+      h('option', { value: 'child', text: '4. تنزيل أرشيف طفل محدد بالكامل' }),
+      h('option', { value: 'reports_only', text: '5. تنزيل التقارير واستمارات التقييم فقط' }),
+      h('option', { value: 'docs_only', text: '6. تنزيل الوثائق والمستندات المرفوعة فقط' }),
+      h('option', { value: 'custom', text: '7. تحديد عدة أقسام أو أطفال (أرشيف مخصص)' })
+    );
+
+    var branchSelect = h('select', null,
+      h('option', { value: '', text: '— اختر الفرع —' }),
+      branches.map(function (b) { return h('option', { value: b.id, text: b.name }); })
+    );
+
+    var secSelect = h('select', null,
+      h('option', { value: '', text: '— اختر القسم —' }),
+      sections.map(function (s) { return h('option', { value: s.id, text: s.name }); })
+    );
+
+    var childSelect = h('select', null,
+      h('option', { value: '', text: '— اختر الطفل —' }),
+      allKids.map(function (k) { return h('option', { value: k.id, text: (k.membership_no ? ('[' + k.membership_no + '] ') : '') + k.full_name }); })
+    );
+
+    var dateFilterSelect = h('select', null,
+      h('option', { value: 'all', text: 'كامل السجلات التاريخية (بلا تحديد زمني)' }),
+      h('option', { value: 'month', text: 'تحديد شهر وسنة محددة' }),
+      h('option', { value: 'custom_range', text: 'تحديد فترة مخصصة (من تاريخ إلى تاريخ)' })
+    );
+
+    var yearInput = h('input', { type: 'number', min: '2020', max: '2100', value: String(now.getFullYear()) });
+    var monthSelect = h('select', null,
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (mNum) {
+        return h('option', { value: String(mNum), text: ARABIC_MONTH_NAMES_LIST[mNum] });
+      })
+    );
+    monthSelect.value = String(now.getMonth() + 1);
+
+    var dateStartInput = h('input', { type: 'date', value: new Date(now.getFullYear(), 0, 1).toISOString().slice(0, 10) });
+    var dateEndInput = h('input', { type: 'date', value: now.toISOString().slice(0, 10) });
+
+    // حاويات إظهار/إخفاء الفلاتر الفرعية
+    var branchField = h('label', { class: 'fld', hidden: true }, h('span', { text: 'الفرع المستهدف:' }), branchSelect);
+    var secField = h('label', { class: 'fld', hidden: true }, h('span', { text: 'القسم المستهدف:' }), secSelect);
+    var childField = h('label', { class: 'fld', hidden: true }, h('span', { text: 'الطفل المستهدف:' }), childSelect);
+
+    var monthField = h('div', { class: 'eval-builder-grid-2', hidden: true },
+      h('label', { class: 'fld' }, h('span', { text: 'السنة:' }), yearInput),
+      h('label', { class: 'fld' }, h('span', { text: 'الشهر:' }), monthSelect)
+    );
+
+    var rangeField = h('div', { class: 'eval-builder-grid-2', hidden: true },
+      h('label', { class: 'fld' }, h('span', { text: 'من تاريخ:' }), dateStartInput),
+      h('label', { class: 'fld' }, h('span', { text: 'إلى تاريخ:' }), dateEndInput)
+    );
+
+    // قائمة الاختيار المتعدد للأقسام في النطاق المخصص
+    var customSecHost = h('div', { style: 'max-height: 180px; overflow-y: auto; border: 1px solid #E2E8F0; padding: 10px; border-radius: 8px; margin-bottom: 12px;', hidden: true });
+    sections.forEach(function (sec) {
+      var chk = h('input', { type: 'checkbox', value: sec.id, id: 'chk_sec_' + sec.id });
+      var lbl = h('label', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer;' }, chk, h('span', { text: sec.name }));
+      customSecHost.appendChild(lbl);
+    });
+
+    scopeSelect.addEventListener('change', function () {
+      var val = scopeSelect.value;
+      branchField.hidden = (val !== 'branch');
+      secField.hidden = (val !== 'section');
+      childField.hidden = (val !== 'child');
+      customSecHost.hidden = (val !== 'custom');
+    });
+
+    dateFilterSelect.addEventListener('change', function () {
+      var dval = dateFilterSelect.value;
+      monthField.hidden = (dval !== 'month');
+      rangeField.hidden = (dval !== 'custom_range');
+    });
+
+    // عناصر شريط التقدم التفاعلي الحي
+    var progressBox = h('div', { class: 'arch-progress-wrap', hidden: true });
+    var progressBarFill = h('div', { class: 'arch-progress-fill' });
+    var progressStatusText = h('span', { text: 'جاهز لبدء الأرشفة...' });
+    var progressCounterText = h('span', { text: '' });
+    var progressErrorBox = h('div', { style: 'margin-top:10px; font-size:0.8rem; color:#B91C1C; max-height:120px; overflow-y:auto;', hidden: true });
+
+    progressBox.appendChild(h('div', { class: 'arch-progress-status' }, progressStatusText, progressCounterText));
+    progressBox.appendChild(h('div', { class: 'arch-progress-bar-bg' }, progressBarFill));
+    progressBox.appendChild(progressErrorBox);
+
+    var startBtn = h('button', { type: 'button', class: 'btn gold', text: 'إنشاء وتنزيل الأرشيف الآن (ZIP)' });
+    var repsOnlyBtn = h('button', {
+      type: 'button', class: 'btn light', text: 'تنزيل التقارير فقط',
+      onclick: function () {
+        scopeSelect.value = 'reports_only';
+        scopeSelect.dispatchEvent(new Event('change'));
+        startBtn.click();
+      }
+    });
+    var docsOnlyBtn = h('button', {
+      type: 'button', class: 'btn light', text: 'تنزيل الوثائق والمرفقات فقط',
+      onclick: function () {
+        scopeSelect.value = 'docs_only';
+        scopeSelect.dispatchEvent(new Event('change'));
+        startBtn.click();
+      }
+    });
+
+    // منطق إنشاء وتنزيل الأرشيف الحي
+    async function startArchiveJob(cfg) {
+      if (!window.DE_ZIP) {
+        return toast('مكتبة الأرشفة zip-builder غير محملة. يرجى تحديث الصفحة.', 'bad');
+      }
+
+      var selScope = cfg ? cfg.scope : scopeSelect.value;
+      var pYear = cfg ? cfg.year : parseInt(yearInput.value, 10);
+      var pMonth = cfg ? cfg.month : (dateFilterSelect.value === 'month' ? parseInt(monthSelect.value, 10) : null);
+      var dateMode = cfg ? (cfg.month ? 'month' : 'all') : dateFilterSelect.value;
+      var startDate = dateStartInput.value;
+      var endDate = dateEndInput.value;
+
+      var targetBranchId = branchSelect.value;
+      var targetSectionId = secSelect.value;
+      var targetChildId = childSelect.value;
+
+      var selectedCustomSecIds = [];
+      if (selScope === 'custom') {
+        var chks = customSecHost.querySelectorAll('input[type="checkbox"]:checked');
+        chks.forEach(function (c) { selectedCustomSecIds.push(c.value); });
+        if (!selectedCustomSecIds.length) {
+          return toast('يرجى تحديد قسم واحد على الأقل في الأرشيف المخصص.', 'bad');
+        }
+      }
+
+      // تصفية الأطفال
+      var targetKids = allKids.slice();
+      if (selScope === 'branch' && targetBranchId) {
+        targetKids = targetKids.filter(function (k) { return k.branch_id === targetBranchId; });
+      } else if (selScope === 'section' && targetSectionId) {
+        targetKids = targetKids.filter(function (k) { return k.section_id === targetSectionId; });
+      } else if (selScope === 'child' && targetChildId) {
+        targetKids = targetKids.filter(function (k) { return k.id === targetChildId; });
+      } else if (selScope === 'custom') {
+        targetKids = targetKids.filter(function (k) { return selectedCustomSecIds.indexOf(k.section_id) >= 0; });
+      }
+
+      var allowedKidMap = {};
+      targetKids.forEach(function (k) { allowedKidMap[k.id] = true; });
+
+      // تصفية التقارير
+      var targetReports = (selScope === 'docs_only') ? [] : allReports.filter(function (r) {
+        if (!allowedKidMap[r.child_id]) return false;
+        var rDate = r.report_date || '';
+        if (dateMode === 'month' && pMonth && rDate) {
+          var rd = new Date(rDate);
+          if (rd.getFullYear() !== pYear || (rd.getMonth() + 1) !== pMonth) return false;
+        } else if (dateMode === 'custom_range' && rDate) {
+          if (startDate && rDate < startDate) return false;
+          if (endDate && rDate > endDate) return false;
+        }
+        return true;
+      });
+
+      // تصفية الوثائق
+      var targetDocs = (selScope === 'reports_only') ? [] : allDocs.filter(function (d) {
+        if (!allowedKidMap[d.child_id]) return false;
+        var dDate = (d.created_at || '').slice(0, 10);
+        if (dateMode === 'month' && pMonth && dDate) {
+          var dd = new Date(dDate);
+          if (dd.getFullYear() !== pYear || (dd.getMonth() + 1) !== pMonth) return false;
+        } else if (dateMode === 'custom_range' && dDate) {
+          if (startDate && dDate < startDate) return false;
+          if (endDate && dDate > endDate) return false;
+        }
+        return true;
+      });
+
+      if (!targetReports.length && !targetDocs.length && !targetKids.length) {
+        return toast('لا توجد ملفات أو سجلات مطابقة للخيارات المحددة.', 'bad');
+      }
+
+      // إظهار شريط التقدم
+      progressBox.hidden = false;
+      progressErrorBox.hidden = true;
+      progressErrorBox.textContent = '';
+      progressBarFill.style.width = '5%';
+      progressStatusText.textContent = 'جارٍ تجهيز ملفات الأرشيف...';
+      startBtn.disabled = true;
+
+      var monthFolderName = pMonth ? (ARABIC_MONTH_NAMES_LIST[pMonth] || String(pMonth)) : 'كامل_السنة';
+      var rootPath = 'Dar_El_Ihsan_Archive/' + pYear + '/' + monthFolderName;
+
+      var filesToZip = [];
+      var csvRows = [
+        ['الرقم', 'اسم الطفل', 'رقم القيد', 'الفرع', 'القسم', 'نوع السجل', 'اسم الملف', 'المسار في الأرشيف', 'التاريخ', 'الحالة', 'ملاحظات']
+      ];
+
+      var totalItems = targetReports.length + targetDocs.length;
+      var processedItems = 0;
+      var successCount = 0;
+      var failedCount = 0;
+      var errorLog = [];
+
+      function updateProgressUi(itemTitle) {
+        processedItems++;
+        var pct = Math.min(90, Math.round((processedItems / (totalItems || 1)) * 85) + 5);
+        progressBarFill.style.width = pct + '%';
+        progressStatusText.textContent = 'معالجة: ' + itemTitle;
+        progressCounterText.textContent = 'ناجح: ' + successCount + ' | فاشل: ' + failedCount + ' | إجمالي: ' + totalItems;
+      }
+
+      try {
+        // 1. معالجة التقارير
+        for (var i = 0; i < targetReports.length; i++) {
+          var rep = targetReports[i];
+          var child = chMap[rep.child_id] || { full_name: 'طفل_غير_معرف', membership_no: '' };
+          var chName = sanitizeArchiveFolderName(child.full_name);
+          var chMem = sanitizeArchiveFolderName(child.membership_no || '');
+          var chFolder = chMem ? (chName + ' [' + chMem + ']') : chName;
+
+          var sec = secMap[child.section_id];
+          var secFolder = sanitizeArchiveFolderName(sec ? sec.name : (child.section || 'غير_مصنف'));
+
+          var br = brMap[child.branch_id];
+          var brFolder = sanitizeArchiveFolderName(br ? br.name : 'المركز_الرئيسي');
+
+          var rDate = rep.report_date || 'تاريخ_غير_محدد';
+          var rTitle = sanitizeArchiveFolderName(rep.title || 'تقرير');
+          var repFolder = rootPath + '/' + brFolder + '/' + secFolder + '/' + chFolder + '/التقارير';
+
+          // أ) ملف HTML رسمي
+          var htmlContent = generateStandaloneReportHtml(rep, child, secFolder, brFolder);
+          var htmlFilePath = repFolder + '/' + rDate + ' - ' + rTitle + '.html';
+          filesToZip.push({ name: htmlFilePath, data: htmlContent });
+
+          // ب) ملف TXT
+          var txtContent = 'العنوان: ' + (rep.title || '') + '\nالتاريخ: ' + rDate + '\nالتلميذ: ' + child.full_name + '\nالقسم: ' + secFolder + '\nالمكتسبات: ' + (rep.achievements || '') + '\nالأنشطة: ' + (rep.activities || '') + '\nملاحظات: ' + (rep.notes || '') + '\n';
+          var txtFilePath = repFolder + '/' + rDate + ' - ' + rTitle + '.txt';
+          filesToZip.push({ name: txtFilePath, data: txtContent });
+
+          successCount++;
+          csvRows.push([String(processedItems + 1), child.full_name, chMem, brFolder, secFolder, 'تقرير تربوي', rTitle + '.html', htmlFilePath, rDate, 'ناجح', 'تم إنشاء الوثيقة']);
+
+          // ج) مرفق التقرير إن وجد
+          if (rep.attachment_path) {
+            var attFolder = rootPath + '/' + brFolder + '/' + secFolder + '/' + chFolder + '/الصور_والمرفقات';
+            var attExt = rep.attachment_path.split('.').pop() || 'dat';
+            var attFilePath = attFolder + '/' + rDate + ' - مرفق_' + rTitle + '.' + attExt;
+
+            try {
+              var signedUrl = await C.signedUrl('private-docs', rep.attachment_path, 120);
+              var fetchResp = await fetch(signedUrl);
+              if (!fetchResp.ok) throw new Error('HTTP ' + fetchResp.status);
+              var attBuffer = await fetchResp.arrayBuffer();
+              filesToZip.push({ name: attFilePath, data: attBuffer });
+              successCount++;
+              csvRows.push([String(processedItems + 1), child.full_name, chMem, brFolder, secFolder, 'مرفق تقرير', 'مرفق_' + rTitle + '.' + attExt, attFilePath, rDate, 'ناجح', 'تم تنزيل المرفق']);
+            } catch (attEx) {
+              failedCount++;
+              var attErr = 'تعذر تنزيل مرفق (' + rep.attachment_path + '): ' + attEx.message;
+              errorLog.push(attErr);
+              csvRows.push([String(processedItems + 1), child.full_name, chMem, brFolder, secFolder, 'مرفق تقرير', 'مرفق_' + rTitle, attFilePath, rDate, 'فشل', attEx.message]);
+              filesToZip.push({ name: attFilePath + '_تعذر_التنزيل.txt', data: attErr });
+            }
+          }
+
+          updateProgressUi(rep.title || 'تقرير');
+        }
+
+        // 2. معالجة الوثائق
+        for (var j = 0; j < targetDocs.length; j++) {
+          var doc = targetDocs[j];
+          var child = chMap[doc.child_id] || { full_name: 'طفل_غير_معرف', membership_no: '' };
+          var chName = sanitizeArchiveFolderName(child.full_name);
+          var chMem = sanitizeArchiveFolderName(child.membership_no || '');
+          var chFolder = chMem ? (chName + ' [' + chMem + ']') : chName;
+
+          var sec = secMap[child.section_id];
+          var secFolder = sanitizeArchiveFolderName(sec ? sec.name : (child.section || 'غير_مصنف'));
+
+          var br = brMap[child.branch_id];
+          var brFolder = sanitizeArchiveFolderName(br ? br.name : 'المركز_الرئيسي');
+
+          var dDate = (doc.created_at || '').slice(0, 10) || 'تاريخ_غير_محدد';
+          var dTitle = sanitizeArchiveFolderName(doc.title || 'وثيقة');
+          var dExt = doc.storage_path ? ('.' + doc.storage_path.split('.').pop()) : '.pdf';
+          var docFilePath = rootPath + '/' + brFolder + '/' + secFolder + '/' + chFolder + '/الوثائق/' + dDate + ' - ' + dTitle + dExt;
+
+          if (doc.storage_path) {
+            try {
+              var sUrl = await C.signedUrl('private-docs', doc.storage_path, 120);
+              var dResp = await fetch(sUrl);
+              if (!dResp.ok) throw new Error('HTTP ' + dResp.status);
+              var dBuffer = await dResp.arrayBuffer();
+              filesToZip.push({ name: docFilePath, data: dBuffer });
+              successCount++;
+              csvRows.push([String(processedItems + 1), child.full_name, chMem, brFolder, secFolder, 'وثيقة رسمية', dTitle + dExt, docFilePath, dDate, 'ناجح', 'تم تنزيل الوثيقة']);
+            } catch (docEx) {
+              failedCount++;
+              var docErr = 'تعذر تنزيل الوثيقة (' + doc.storage_path + '): ' + docEx.message;
+              errorLog.push(docErr);
+              csvRows.push([String(processedItems + 1), child.full_name, chMem, brFolder, secFolder, 'وثيقة رسمية', dTitle + dExt, docFilePath, dDate, 'فشل', docEx.message]);
+              filesToZip.push({ name: docFilePath + '_تعذر_التنزيل.txt', data: docErr });
+            }
+          }
+
+          updateProgressUi(doc.title || 'وثيقة');
+        }
+
+        // 3. كتابة فهرس الأرشيف CSV (مع UTF-8 BOM)
+        var csvContent = '\uFEFF' + csvRows.map(function (row) {
+          return row.map(function (c) { return '"' + String(c == null ? '' : c).replace(/"/g, '""') + '"'; }).join(',');
+        }).join('\r\n');
+        filesToZip.push({ name: rootPath + '/فهرس_الأرشيف.csv', data: csvContent });
+
+        // 4. كتابة تقرير الأرشفة النصي
+        var reportTxt = '══════════════════════════════════════════════════════════════════════\n' +
+          '           تقرير الأرشفة الشاملة والنسخ الاحتياطي — دار الإحسان\n' +
+          '══════════════════════════════════════════════════════════════════════\n' +
+          'تاريخ وساعة التنفيذ: ' + (new Date().toLocaleString('ar-DZ')) + ' (توقيت الجزائر Africa/Algiers)\n' +
+          'نطاق الأرشفة: ' + (cfg ? cfg.scopeLabel : scopeSelect.options[scopeSelect.selectedIndex].text) + '\n' +
+          'السنة المستهدفة: ' + pYear + '\n' +
+          'الشهر المستهدف: ' + monthFolderName + '\n\n' +
+          'إحصائيات العملية:\n' +
+          '• إجمالي السجلات المفحوصة: ' + (targetReports.length + targetDocs.length) + '\n' +
+          '• الملفات المؤرشفة بنجاح: ' + successCount + '\n' +
+          '• الملفات التي تعذر تنزيلها: ' + failedCount + '\n\n' +
+          'سجل الملاحظات والأخطاء:\n' +
+          (errorLog.length ? errorLog.map(function (e) { return ' - [!] ' + e; }).join('\n') : ' - جميع الملفات والوثائق تمت أرشفتها بنجاح تام 100% دون أي أخطاء.') + '\n' +
+          '══════════════════════════════════════════════════════════════════════\n';
+        filesToZip.push({ name: rootPath + '/تقرير_الأرشفة.txt', data: reportTxt });
+
+        // 5. ضغط وبناء ملف الـ ZIP وتنزيله
+        progressStatusText.textContent = 'جارٍ ضغط الأرشيف وتنزيل ملف ZIP...';
+        progressBarFill.style.width = '95%';
+
+        var zipBlob = DE_ZIP.build(filesToZip, function (curr, tot) {
+          var p = 90 + Math.round((curr / tot) * 10);
+          progressBarFill.style.width = Math.min(100, p) + '%';
+        });
+
+        var scopeSlug = selScope.replace(/_/g, '-');
+        var zipFileName = 'Dar_El_Ihsan_Archive_' + pYear + '_' + sanitizeArchiveFolderName(monthFolderName) + '_' + scopeSlug + '_' + (new Date().toISOString().slice(0, 10)) + '.zip';
+        DE_ZIP.download(zipBlob, zipFileName);
+
+        progressBarFill.style.width = '100%';
+        progressStatusText.textContent = 'اكتمل إنشاء وتنزيل الأرشيف بنجاح! (' + (zipBlob.size / (1024 * 1024)).toFixed(2) + ' MB)';
+
+        // تسجيل العملية في قاعدة البيانات والتخزين المحلي
+        var runRecord = {
+          period_year: pYear,
+          period_month: pMonth || now.getMonth() + 1,
+          archive_scope: selScope,
+          initiated_by: (S.me && S.me.id) || null,
+          initiator_name: S.email || 'المدير',
+          status: failedCount > 0 ? 'completed_with_errors' : 'completed',
+          total_records: totalItems,
+          success_count: successCount,
+          failed_count: failedCount,
+          file_size_bytes: zipBlob.size,
+          error_summary: errorLog.slice(0, 5).join('; ')
+        };
+
+        C.rest('POST', '/archive_runs', runRecord).catch(function () {});
+
+        try {
+          var runsHist = JSON.parse(localStorage.getItem('de_archive_runs_history') || '[]');
+          runRecord.run_date = new Date().toISOString();
+          runsHist.unshift(runRecord);
+          localStorage.setItem('de_archive_runs_history', JSON.stringify(runsHist.slice(0, 30)));
+        } catch (e) {}
+
+        if (errorLog.length) {
+          progressErrorBox.hidden = false;
+          progressErrorBox.innerHTML = '<strong>ملاحظات وأخطاء التنزيل:</strong><br>' + errorLog.map(function (e) { return '• ' + e; }).join('<br>');
+        }
+
+        toast('تم تنزيل أرشيف دار الإحسان بنجاح على جهازك!', 'ok');
+      } catch (fatalEx) {
+        progressStatusText.textContent = 'تعذر استكمال الأرشفة: ' + fatalEx.message;
+        progressBarFill.style.background = '#DC2626';
+        toast('خطأ أثناء الأرشفة: ' + fatalEx.message, 'bad');
+      } finally {
+        startBtn.disabled = false;
+      }
+    }
+
+    startBtn.addEventListener('click', function () { startArchiveJob(null); });
+
+    // تجميع بطاقة الإعداد
+    var wizardCard = h('div', { class: 'arch-card' },
+      h('h3', { class: 'arch-card-title' }, makeSvgIcon('s-archive'), h('span', { text: 'إنشاء وتنزيل أرشيف مخصص للكمبيوتر (ZIP)' })),
+      h('p', { class: 'muted small', text: 'حدد نطاق الأرشفة والفترة الزمنية، وسيتم استخراج الملفات الأصلية وتنظيمها تلقائياً داخل أرشيف ZIP مضغوط.' }),
+      h('div', { class: 'arch-filter-grid' },
+        h('label', { class: 'fld' }, h('span', { text: 'نطاق الأرشفة:' }), scopeSelect),
+        branchField,
+        secField,
+        childField,
+        h('label', { class: 'fld' }, h('span', { text: 'الفترة الزمنية:' }), dateFilterSelect)
+      ),
+      monthField,
+      rangeField,
+      customSecHost,
+      progressBox,
+      h('div', { class: 'arch-btn-row' },
+        startBtn,
+        repsOnlyBtn,
+        docsOnlyBtn
+      )
+    );
+    v.appendChild(wizardCard);
+
+    // 4. جدول سجل العمليات السابقة
+    v.appendChild(h('div', { class: 'bar-sub' },
+      h('h3', { text: 'سجل عمليات الأرشفة السابقة' })
+    ));
+
+    if (!pastRuns.length) {
+      v.appendChild(h('div', { class: 'card empty', text: 'لم يتم تسجيل أي عمليات أرشفة سابقة بعد.' }));
+    } else {
+      var rowsHtml = pastRuns.map(function (pr) {
+        var statusBadgeKind = pr.status === 'completed' ? 'ok' : (pr.status === 'completed_with_errors' ? 'gold' : 'bad');
+        var statusTxt = pr.status === 'completed' ? 'ناجحة' : (pr.status === 'completed_with_errors' ? 'ناجحة مع أخطاء' : 'فاشلة');
+        var sizeMb = pr.file_size_bytes ? (pr.file_size_bytes / (1024 * 1024)).toFixed(2) + ' MB' : '—';
+        var pMonthTxt = pr.period_month ? (ARABIC_MONTH_NAMES_LIST[pr.period_month] || String(pr.period_month)) : '—';
+
+        return h('tr', null,
+          h('td', { text: fmt(pr.run_date || pr.created_at) }),
+          h('td', { text: pr.archive_scope || 'all' }),
+          h('td', { text: (pr.period_year || '') + ' / ' + pMonthTxt }),
+          h('td', { text: String(pr.success_count || 0) + ' من ' + String(pr.total_records || 0) }),
+          h('td', { text: sizeMb }),
+          h('td', null, badge(statusTxt, statusBadgeKind)),
+          h('td', null,
+            h('button', {
+              type: 'button',
+              class: 'btn small light',
+              text: 'إعادة إنشاء وتنزيل',
+              onclick: function () {
+                startArchiveJob({
+                  scope: pr.archive_scope || 'all',
+                  year: pr.period_year,
+                  month: pr.period_month,
+                  scopeLabel: 'إعادة أرشفة ' + (pr.period_year || '') + ' / ' + pMonthTxt
+                });
+              }
+            })
+          )
+        );
+      });
+
+      var historyTable = h('div', { class: 'table-wrap' },
+        h('table', { class: 'tbl' },
+          h('thead', null,
+            h('tr', null,
+              h('th', { text: 'تاريخ العملية' }),
+              h('th', { text: 'النطاق' }),
+              h('th', { text: 'الفترة' }),
+              h('th', { text: 'الملفات' }),
+              h('th', { text: 'الحجم' }),
+              h('th', { text: 'الحالة' }),
+              h('th', { text: 'إجراءات' })
+            )
+          ),
+          h('tbody', null, rowsHtml)
+        )
+      );
+      v.appendChild(historyTable);
+    }
+
+    // 5. بطاقة برنامج الأرشفة التلقائية على الكمبيوتر (Standalone Script)
+    var toolCard = h('div', { class: 'arch-tool-box' },
+      h('h3', { style: 'margin-top:0; color:#123E73;', text: '💻 برنامج النسخ الاحتياطي التلقائي على الكمبيوتر (بدون فتح المتصفح)' }),
+      h('p', { class: 'muted small', text: 'لا يمكن للموقع في المتصفح حفظ ملفات على القرص الصلب وهو مغلق. لذلك، قمنا ببرمجة أداة مستقلة (backup-tool.py) تعمل على حاسوب الإدارة وتقوم بتنزيل وتحديث الأرشيفات الشهرية تلقائياً في مجلد محدد.' }),
+      h('div', { class: 'arch-code-snippet', text: 'python3 backup-tool.py --auto --out C:\\DarElIhsan_Backups' }),
+      h('p', { class: 'muted small', text: 'يمكنك جدولة هذا الأمر في ويندوز (Task Scheduler) ليعمل تلقائياً في اليوم الأول من كل شهر عند الساعة 00:00 بتوقيت الجزائر.' }),
+      h('div', { class: 'row-actions', style: 'margin-top:12px;' },
+        h('button', {
+          type: 'button',
+          class: 'btn light',
+          text: 'تحميل برنامج الأرشفة للكمبيوتر (backup-tool.py)',
+          onclick: function () {
+            var a = document.createElement('a');
+            a.href = 'backup-tool.py';
+            a.download = 'backup-tool.py';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          }
+        })
+      )
+    );
+    v.appendChild(toolCard);
+  }
+
+  /* =====================================================================
      التنقل والتهيئة (Navigation & Bootstrap)
      ===================================================================== */
   var SECS = {
@@ -6694,6 +7387,7 @@
     appts: secAppts,
     msgs: secMsgs,
     docs: secDocs,
+    archive: secArchive,
     accounts: function (v) { return secAccounts(v, false); },
     audit: secAudit,
     settings: secSettings
