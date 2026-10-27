@@ -574,7 +574,9 @@
     }
 
     try {
-      var rows = await C.rest('GET', '/site_content?id=eq.draft&select=id,data');
+      var fetchP = C.rest('GET', '/site_content?id=eq.draft&select=id,data');
+      var timeP = new Promise(function (_, rej) { setTimeout(function () { rej(new Error('timeout')); }, 3000); });
+      var rows = await Promise.race([fetchP, timeP]);
       var list = Array.isArray(rows) ? rows : (rows ? [rows] : []);
       var draftRow = list[0];
       var remoteMeta = (draftRow && draftRow.data && draftRow.data._portal_meta) ? normalizePortalMeta(draftRow.data._portal_meta) : null;
@@ -7762,7 +7764,11 @@
 
       if (C.loggedIn()) {
         var ok = false;
-        try { ok = await C.rpc('can_manage_families'); } catch (eRpc) { ok = isKnownStaff; }
+        try {
+          var rpcP = C.rpc('can_manage_families');
+          var timeP2 = new Promise(function (_, rej) { setTimeout(function () { rej(new Error('timeout')); }, 3000); });
+          ok = await Promise.race([rpcP, timeP2]);
+        } catch (eRpc) { ok = isKnownStaff; }
         if (ok !== true && !isKnownStaff) {
           var anyAdmin = false;
           try { anyAdmin = await C.rpc('is_admin'); } catch (eAdm) {}
@@ -8010,140 +8016,185 @@
     } catch (eDom) {}
   }
 
-  async function init() {
-    ensureManageDomReady();
-    if (!CFG.supabaseUrl || !CFG.supabaseKey) { if ($('#boot')) $('#boot').textContent = 'إعدادات الاتصال غير مضبوطة.'; return; }
-    C.onExpire(function () { showLogin('انتهت الجلسة. سجّل الدخول من جديد.'); });
-    $('#loginForm').addEventListener('submit', submitLogin);
-    var qDemo = $('#quickDemoAdminBtn');
-    if (qDemo) {
-      qDemo.addEventListener('click', function () {
-        $('#email').value = '0540817775';
-        $('#password').value = 'DI11051993';
-        $('#loginForm').dispatchEvent(new Event('submit'));
-      });
-    }
-    var ftBtn = $('#firstTimeBtn');
-    if (ftBtn) {
-      ftBtn.addEventListener('click', function () {
-        msg($('#lErr'), ''); msg($('#lOk'), '');
-        $('#invEmail').value = ($('#email').value || '').trim();
-        setMode('invite');
-        $('#invEmail').focus();
-      });
-    }
-    $('#forgotBtn').addEventListener('click', function () { msg($('#lErr'), ''); msg($('#lOk'), ''); $('#fEmail').value = ($('#email').value || '').trim(); setMode('forgot'); $('#fEmail').focus(); });
-    $('#backBtn').addEventListener('click', function () { C.cancelMfa(); msg($('#lErr'), ''); msg($('#lOk'), ''); setMode('creds'); });
-    var topLBtn = $('#logoutBtn'); if (topLBtn) topLBtn.addEventListener('click', function () { logout(); });
-    if ($('#sideLogoutBtn')) $('#sideLogoutBtn').addEventListener('click', function () { logout(); });
-    if ($('#hubSwitchBtn')) $('#hubSwitchBtn').addEventListener('click', function () { if (!S.isEducator) go('hub'); });
-    if ($('#sideCenterCard')) $('#sideCenterCard').addEventListener('click', function () { if (!S.isEducator) go('hub'); });
-    if ($('#menuBtn')) {
-      $('#menuBtn').addEventListener('click', function () {
-        if (window.innerWidth <= 860) {
-          $('#app').classList.toggle('nav-toggled');
-        } else {
-          $('#app').classList.toggle('side-collapsed');
-        }
-      });
-    }
-    if ($('#sideCloseBtn')) {
-      $('#sideCloseBtn').addEventListener('click', function () {
-        if (window.innerWidth <= 860) {
-          $('#app').classList.remove('nav-toggled');
-        } else {
-          $('#app').classList.toggle('side-collapsed');
-        }
-      });
-    }
-    if ($('#scrim')) $('#scrim').addEventListener('click', function () { $('#app').classList.remove('nav-toggled'); });
-    if ($('#nav')) $('#nav').addEventListener('click', function (e) { var b = e.target.closest('button[data-sec]'); if (b) go(b.dataset.sec); });
-    if ($('#modal')) $('#modal').addEventListener('click', function (e) { if (e.target === $('#modal')) closeModal(); });
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('#modal').hidden) closeModal(); });
-
-    /* دعم زر الرجوع في الهاتف (Hardware Back Button) للرجوع خطوة للخلف داخل الموقع وعدم الخروج منه */
-    window.addEventListener('popstate', function () {
-      if ($('#login') && !$('#login').hidden && mode !== 'creds') {
-        C.cancelMfa();
-        msg($('#lErr'), '');
-        msg($('#lOk'), '');
-        setMode('creds');
-        try { window.history.pushState({ deLogin: true }, ''); } catch (e) {}
-        return;
+  // ملتقط أخطاء عام لمنع بقاء الصفحة معلقة على شاشة التحميل إطلاقاً
+  if (typeof window !== 'undefined') {
+    window.addEventListener('error', function (errEv) {
+      var b = document.getElementById('boot');
+      if (b && !b.hidden) {
+        showLogin();
       }
-      if ((!C.loggedIn() && !readStaffSession()) || ($('#app') && $('#app').hidden)) return;
-
-      if ($('#modal') && !$('#modal').hidden) {
-        closeModal();
-        return;
-      }
-      if ($('#app') && $('#app').classList.contains('nav-toggled')) {
-        $('#app').classList.remove('nav-toggled');
-        try { window.history.pushState({ deApp: true, sec: S.sec, center: S.activeCenter }, ''); } catch (e) {}
-        return;
-      }
-      if (S.inSubBuilder) {
-        S.inSubBuilder = false;
-        go(S.sec, { fromHistory: true });
-        try { window.history.pushState({ deApp: true, sec: S.sec, center: S.activeCenter }, ''); } catch (e) {}
-        return;
-      }
-      if (!S.isEducator && S.filterSectionId) {
-        S.filterSectionId = '';
-        go('children', { fromHistory: true });
-        try { window.history.pushState({ deApp: true, sec: 'children', center: S.activeCenter }, ''); } catch (e) {}
-        return;
-      }
-      while (S.navStack.length > 0) {
-        var prev = S.navStack.pop();
-        if (prev && (prev.sec !== S.sec || prev.center !== S.activeCenter || prev.filterSectionId !== S.filterSectionId)) {
-          S.activeCenter = prev.center || S.activeCenter;
-          S.filterSectionId = prev.filterSectionId || '';
-          go(prev.sec, { fromHistory: true });
-          try { window.history.pushState({ deApp: true, sec: prev.sec, center: S.activeCenter }, ''); } catch (e) {}
-          return;
-        }
-      }
-      var rootSec = S.isEducator ? 'children' : 'hub';
-      if (S.sec !== rootSec) {
-        go(rootSec, { fromHistory: true });
-        try { window.history.pushState({ deApp: true, sec: rootSec, center: S.activeCenter }, ''); } catch (e) {}
-        return;
-      }
-      try { window.history.pushState({ deApp: true, sec: rootSec, center: S.activeCenter }, ''); } catch (e) {}
     });
+    window.addEventListener('unhandledrejection', function () {
+      var b = document.getElementById('boot');
+      if (b && !b.hidden) {
+        showLogin();
+      }
+    });
+  }
+
+  async function init() {
+    // صمام أمان حاسم: إذا بقيت شاشة التحميل ظاهرة لأكثر من ثانيتين، يتم إظهار شاشة الدخول فوراً
+    setTimeout(function () {
+      var b = document.getElementById('boot');
+      if (b && !b.hidden) {
+        var appEl = document.getElementById('app');
+        var loginEl = document.getElementById('login');
+        if ((!appEl || appEl.hidden) && (!loginEl || loginEl.hidden)) {
+          showLogin();
+        }
+      }
+    }, 2000);
 
     try {
-      var sp = new URLSearchParams(window.location.search);
-      if (sp.get('invite_edu') === '1') {
-        var invU = (sp.get('u') || '').trim().toLowerCase();
-        var invPhone = sp.get('phone') || '';
-        var invName = sp.get('name') || '';
-        window.history.replaceState(null, '', window.location.pathname);
-        if (invU) {
-          show('login');
-          if ($('#invEmail')) $('#invEmail').value = invPhone || invU;
-          if ($('#email')) $('#email').value = invPhone || invU;
-          setMode('invite', 'مرحبًا بكِ أستاذة ' + (invName || '') + '! اضغطي الزر أدناه لتفعيل حسابكِ وإنشاء كلمة المرور الخاصة بكِ.');
+      ensureManageDomReady();
+      if (!CFG.supabaseUrl || !CFG.supabaseKey) { if ($('#boot')) $('#boot').textContent = 'إعدادات الاتصال غير مضبوطة.'; return; }
+      C.onExpire(function () { showLogin('انتهت الجلسة. سجّل الدخول من جديد.'); });
+
+      if ($('#loginForm')) $('#loginForm').addEventListener('submit', submitLogin);
+      var qDemo = $('#quickDemoAdminBtn');
+      if (qDemo) {
+        qDemo.addEventListener('click', function () {
+          $('#email').value = '0540817775';
+          $('#password').value = 'DI11051993';
+          $('#loginForm').dispatchEvent(new Event('submit'));
+        });
+      }
+      var ftBtn = $('#firstTimeBtn');
+      if (ftBtn) {
+        ftBtn.addEventListener('click', function () {
+          msg($('#lErr'), ''); msg($('#lOk'), '');
+          $('#invEmail').value = ($('#email').value || '').trim();
+          setMode('invite');
+          $('#invEmail').focus();
+        });
+      }
+      if ($('#forgotBtn')) $('#forgotBtn').addEventListener('click', function () { msg($('#lErr'), ''); msg($('#lOk'), ''); $('#fEmail').value = ($('#email').value || '').trim(); setMode('forgot'); $('#fEmail').focus(); });
+      if ($('#backBtn')) $('#backBtn').addEventListener('click', function () { C.cancelMfa(); msg($('#lErr'), ''); msg($('#lOk'), ''); setMode('creds'); });
+      var topLBtn = $('#logoutBtn'); if (topLBtn) topLBtn.addEventListener('click', function () { logout(); });
+      if ($('#sideLogoutBtn')) $('#sideLogoutBtn').addEventListener('click', function () { logout(); });
+      if ($('#hubSwitchBtn')) $('#hubSwitchBtn').addEventListener('click', function () { if (!S.isEducator) go('hub'); });
+      if ($('#sideCenterCard')) $('#sideCenterCard').addEventListener('click', function () { if (!S.isEducator) go('hub'); });
+      if ($('#menuBtn')) {
+        $('#menuBtn').addEventListener('click', function () {
+          if (window.innerWidth <= 860) {
+            $('#app').classList.toggle('nav-toggled');
+          } else {
+            $('#app').classList.toggle('side-collapsed');
+          }
+        });
+      }
+      if ($('#sideCloseBtn')) {
+        $('#sideCloseBtn').addEventListener('click', function () {
+          if (window.innerWidth <= 860) {
+            $('#app').classList.remove('nav-toggled');
+          } else {
+            $('#app').classList.toggle('side-collapsed');
+          }
+        });
+      }
+      if ($('#scrim')) $('#scrim').addEventListener('click', function () { $('#app').classList.remove('nav-toggled'); });
+      if ($('#nav')) $('#nav').addEventListener('click', function (e) { var b = e.target.closest('button[data-sec]'); if (b) go(b.dataset.sec); });
+      if ($('#modal')) $('#modal').addEventListener('click', function (e) { if (e.target === $('#modal')) closeModal(); });
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('#modal').hidden) closeModal(); });
+
+      /* دعم زر الرجوع في الهاتف (Hardware Back Button) للرجوع خطوة للخلف داخل الموقع وعدم الخروج منه */
+      window.addEventListener('popstate', function () {
+        if ($('#login') && !$('#login').hidden && mode !== 'creds') {
+          C.cancelMfa();
+          msg($('#lErr'), '');
+          msg($('#lOk'), '');
+          setMode('creds');
+          try { window.history.pushState({ deLogin: true }, ''); } catch (e) {}
           return;
         }
-      }
-    } catch (eInvUrl) {}
+        if ((!C.loggedIn() && !readStaffSession()) || ($('#app') && $('#app').hidden)) return;
 
-    var hash = await C.adoptHash();
-    if (hash && hash.error) { showLogin(hash.error); return; }
-    if (hash && (hash.token || hash.type === 'invite' || hash.type === 'recovery' || hash.type === 'signup')) {
-      show('login');
-      var userEmail = hash.email || '';
-      if (!userEmail) {
-        try { var u = await C.me(); if (u && u.email) userEmail = u.email; } catch (e) {}
+        if ($('#modal') && !$('#modal').hidden) {
+          closeModal();
+          return;
+        }
+        if ($('#app') && $('#app').classList.contains('nav-toggled')) {
+          $('#app').classList.remove('nav-toggled');
+          try { window.history.pushState({ deApp: true, sec: S.sec, center: S.activeCenter }, ''); } catch (e) {}
+          return;
+        }
+        if (S.inSubBuilder) {
+          S.inSubBuilder = false;
+          go(S.sec, { fromHistory: true });
+          try { window.history.pushState({ deApp: true, sec: S.sec, center: S.activeCenter }, ''); } catch (e) {}
+          return;
+        }
+        if (!S.isEducator && S.filterSectionId) {
+          S.filterSectionId = '';
+          go('children', { fromHistory: true });
+          try { window.history.pushState({ deApp: true, sec: 'children', center: S.activeCenter }, ''); } catch (e) {}
+          return;
+        }
+        while (S.navStack.length > 0) {
+          var prev = S.navStack.pop();
+          if (prev && (prev.sec !== S.sec || prev.center !== S.activeCenter || prev.filterSectionId !== S.filterSectionId)) {
+            S.activeCenter = prev.center || S.activeCenter;
+            S.filterSectionId = prev.filterSectionId || '';
+            go(prev.sec, { fromHistory: true });
+            try { window.history.pushState({ deApp: true, sec: prev.sec, center: S.activeCenter }, ''); } catch (e) {}
+            return;
+          }
+        }
+        var rootSec = S.isEducator ? 'children' : 'hub';
+        if (S.sec !== rootSec) {
+          go(rootSec, { fromHistory: true });
+          try { window.history.pushState({ deApp: true, sec: rootSec, center: S.activeCenter }, ''); } catch (e) {}
+          return;
+        }
+        try { window.history.pushState({ deApp: true, sec: rootSec, center: S.activeCenter }, ''); } catch (e) {}
+      });
+
+      try {
+        var sp = new URLSearchParams(window.location.search);
+        if (sp.get('invite_edu') === '1') {
+          var invU = (sp.get('u') || '').trim().toLowerCase();
+          var invPhone = sp.get('phone') || '';
+          var invName = sp.get('name') || '';
+          window.history.replaceState(null, '', window.location.pathname);
+          if (invU) {
+            show('login');
+            if ($('#invEmail')) $('#invEmail').value = invPhone || invU;
+            if ($('#email')) $('#email').value = invPhone || invU;
+            setMode('invite', 'مرحبًا بكِ أستاذة ' + (invName || '') + '! اضغطي الزر أدناه لتفعيل حسابكِ وإنشاء كلمة المرور الخاصة بكِ.');
+            return;
+          }
+        }
+      } catch (eInvUrl) {}
+
+      try {
+        var hash = await C.adoptHash();
+        if (hash && hash.error) { showLogin(hash.error); return; }
+        if (hash && (hash.token || hash.type === 'invite' || hash.type === 'recovery' || hash.type === 'signup')) {
+          show('login');
+          var userEmail = hash.email || '';
+          if (!userEmail) {
+            try { var u = await C.me(); if (u && u.email) userEmail = u.email; } catch (e) {}
+          }
+          if ($('#setEmail')) $('#setEmail').value = userEmail;
+          if ($('#email')) $('#email').value = userEmail;
+          setMode('set', 'مرحبًا بك في لوحة الإدارة! حسابك معروض أدناه. يرجى إنشاء كلمة المرور الخاصة بك وتأكيدها للمتابعة.');
+          return;
+        }
+      } catch (eHash) {}
+
+      if (C.load() || readStaffSession()) {
+        try {
+          await enter();
+        } catch (eEnter) {
+          showLogin(eEnter && eEnter.message);
+        }
+      } else {
+        showLogin();
       }
-      if ($('#setEmail')) $('#setEmail').value = userEmail;
-      if ($('#email')) $('#email').value = userEmail;
-      setMode('set', 'مرحبًا بك في لوحة الإدارة! حسابك معروض أدناه. يرجى إنشاء كلمة المرور الخاصة بك وتأكيدها للمتابعة.');
-      return;
+    } catch (eFatal) {
+      console.error('Fatal init error:', eFatal);
+      showLogin(eFatal && eFatal.message);
     }
-    if (C.load() || readStaffSession()) enter(); else showLogin();
   }
 
   init();
