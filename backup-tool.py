@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 ══════════════════════════════════════════════════════════════════════════════
@@ -70,7 +70,7 @@ def load_config():
 
     # Fallback to defaults
     if not url: url = "https://qgjddtylriqdwvpihvmi.supabase.co"
-    if not anon_key: anon_key = "sb_publishable_default"
+    if not anon_key: anon_key = "sb_publishable_8mgO37k9jB9_Dg4OQTfynw_NBC0gLjK"
 
     return url, anon_key
 
